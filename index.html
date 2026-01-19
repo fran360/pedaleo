@@ -2,18 +2,19 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Therapy - Bike 360</title>
-    <meta name="description" content="Terapia Motora VR con Pedaleo">
+    <title>VR Cycling Test - Simulator Mode</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    
     <style>
-      /* Botón de conexión sobrepuesto */
       #ui-container {
         position: absolute;
         top: 20px;
         left: 20px;
         z-index: 999;
-        font-family: Arial, sans-serif;
+        font-family: sans-serif;
+        background: rgba(0,0,0,0.7);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
       }
       .btn-connect {
         padding: 15px 25px;
@@ -23,45 +24,39 @@
         border: none;
         border-radius: 8px;
         cursor: pointer;
-      }
-      #status {
-        color: white;
-        background: rgba(0,0,0,0.5);
-        padding: 5px;
-        margin-top: 10px;
         display: block;
+        margin-bottom: 10px;
       }
+      #status { font-size: 14px; }
+      .instrucciones { font-size: 12px; color: #ccc; margin-top: 10px; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <button class="btn-connect" onclick="conectarSensor()">Conectar Sensor Magene</button>
-      <span id="status">Estado: Desconectado</span>
+      <button class="btn-connect" onclick="conectarSensor()">1. Conectar Sensor Magene</button>
+      <div id="status">Estado: Esperando conexión...</div>
+      <div class="instrucciones">
+        <strong>Modo Prueba:</strong> Si no tienes sensor, pulsa la barra <strong>ESPACIO</strong> repetidamente para pedalear.
+      </div>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" 
-               src="video_recorrido.mp4" 
-               preload="auto" 
-               loop="true" 
-               crossorigin="anonymous"
-               playsinline 
-               webkit-playsinline>
-        </video>
+        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline></video>
       </a-assets>
 
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
 
       <a-camera>
-        <a-cursor color="#FFF"></a-cursor>
+        <a-cursor color="#FFF" fuse="false"></a-cursor>
       </a-camera>
     </a-scene>
 
     <script>
       let video = document.getElementById('video_asset');
       let statusText = document.getElementById('status');
+      let uiContainer = document.getElementById('ui-container');
       
       let lastRevolutions = -1;
       let targetPlaybackRate = 0;
@@ -69,7 +64,15 @@
       let isPedaling = false;
       let stopTimeout;
 
-      // UUIDs estándar para Sensores de Ciclismo
+      // --- LÓGICA DE SIMULACIÓN (Para tus pruebas actuales) ---
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          console.log("Pedalada simulada con Espacio");
+          iniciarMovimiento();
+        }
+      });
+
+      // --- LÓGICA BLUETOOTH REAL ---
       const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
       const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
 
@@ -85,38 +88,37 @@
           const characteristic = await service.getCharacteristic(CSC_CHARACTERISTIC_UUID);
 
           await characteristic.startNotifications();
-          characteristic.addEventListener('characteristicvaluechanged', handleData);
+          characteristic.addEventListener('characteristicvaluechanged', (event) => {
+            let value = event.target.value;
+            let cumulativeRev = value.getUint16(1, true); 
+            if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
+              iniciarMovimiento();
+            }
+            lastRevolutions = cumulativeRev;
+          });
           
-          statusText.innerText = "Estado: Conectado y Listo";
+          statusText.innerText = "¡CONECTADO!";
           statusText.style.color = "#00FF00";
           
-          // Ocultamos el botón tras conectar para no molestar
-          document.querySelector('.btn-connect').style.display = 'none';
+          // OCULTAR INTERFAZ: Esperamos 3 segundos y escondemos todo el cuadro
+          setTimeout(() => {
+            uiContainer.style.transition = "opacity 1s";
+            uiContainer.style.opacity = "0";
+            setTimeout(() => uiContainer.style.display = 'none', 1000);
+          }, 3000);
+
         } catch (error) {
-          console.log(error);
           statusText.innerText = "Error: " + error;
         }
       }
 
-      function handleData(event) {
-        let value = event.target.value;
-        // El sensor Magene en modo cadencia envía las revoluciones acumuladas
-        let cumulativeRev = value.getUint16(1, true); 
-
-        if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
-          // Si el número de revoluciones ha cambiado, es que está pedaleando
-          iniciarMovimiento();
-        }
-        lastRevolutions = cumulativeRev;
-      }
-
       function iniciarMovimiento() {
         isPedaling = true;
-        targetPlaybackRate = 1.0; // Velocidad normal
+        targetPlaybackRate = 1.0; 
         
         if (video.paused) video.play();
 
-        // Si pasan 2 segundos sin recibir datos del sensor, empezamos a frenar
+        // Si no detecta pedalada en 2 segundos, inicia el freno
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
           isPedaling = false;
@@ -125,10 +127,8 @@
       }
 
       // Bucle de suavizado (Inercia)
-      // Se ejecuta cada frame para que el cambio de velocidad no sea brusco
       function updateInertia() {
-        // Interpolación lineal simple (Lerp)
-        // El valor 0.02 controla qué tan "suave" es la aceleración y el frenado
+        // El factor 0.02 hace que el cambio sea muy gradual y agradable
         currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * 0.02;
 
         if (currentPlaybackRate > 0.05) {
@@ -137,11 +137,9 @@
           video.playbackRate = 0;
           if (!video.paused && !isPedaling) video.pause();
         }
-
         requestAnimationFrame(updateInertia);
       }
 
-      // Iniciamos el bucle de suavizado
       updateInertia();
     </script>
   </body>
