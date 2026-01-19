@@ -1,27 +1,29 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
   <head>
     <meta charset="utf-8">
     <title>VR Cycling - Terapia Motora</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
-      /* Estilo limpio para la interfaz inicial */
+      /* Estética profesional y limpia para centros de mayores */
       #ui-container {
         position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%, -50%); /* Centrado en pantalla */
-        z-index: 999; font-family: sans-serif;
-        background: rgba(0,0,0,0.85); padding: 30px;
-        border-radius: 15px; color: white;
-        text-align: center; min-width: 250px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        transform: translate(-50%, -50%);
+        z-index: 999; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: rgba(0,0,0,0.85); padding: 40px;
+        border-radius: 20px; color: white;
+        text-align: center; min-width: 300px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       }
       .btn-connect {
-        padding: 15px 30px; font-size: 18px;
+        padding: 20px 40px; font-size: 20px;
         background-color: #008CBA; color: white;
-        border: none; border-radius: 8px; cursor: pointer;
-        width: 100%; margin-bottom: 15px; font-weight: bold;
+        border: none; border-radius: 10px; cursor: pointer;
+        width: 100%; margin-bottom: 20px; font-weight: bold;
+        transition: background-color 0.3s;
       }
-      #status { font-size: 16px; opacity: 0.9; }
+      .btn-connect:hover { background-color: #007399; }
+      #status { font-size: 18px; opacity: 0.9; }
     </style>
   </head>
   <body>
@@ -33,7 +35,21 @@
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
+        <video id="video_asset" 
+               src="video_recorrido.mp4" 
+               preload="auto" 
+               loop="true" 
+               crossorigin="anonymous" 
+               playsinline 
+               webkit-playsinline 
+               muted>
+        </video>
+
+        <audio id="audio_ambiente" 
+               src="ambiente.mp3" 
+               loop="true" 
+               preload="auto">
+        </audio>
       </a-assets>
 
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
@@ -42,66 +58,89 @@
     </a-scene>
 
     <script>
+      // Referencias a elementos
       const video = document.getElementById('video_asset');
+      const audio = document.getElementById('audio_ambiente');
       const statusText = document.getElementById('status');
       const uiContainer = document.getElementById('ui-container');
       
+      // Variables de control de movimiento
       let targetPlaybackRate = 0;
       let currentPlaybackRate = 0;
       let isPedaling = false;
       let stopTimeout;
       let lastRevolutions = -1;
 
-      // AJUSTES DE SENSACIÓN
-      const ACELERACION = 0.015; 
-      const FRENADO = 0.025;
+      // Configuración de Sensaciones (Rampas de velocidad)
+      const ACELERACION = 0.015; // Velocidad con la que arranca (0.015 = muy suave)
+      const FRENADO = 0.025;     // Velocidad con la que frena (0.025 = inercia natural)
 
-      // Simulador oculto (Solo tú lo sabes)
+      // --- SIMULADOR PARA PRUEBAS (Tecla Espacio) ---
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
           if (video.paused) video.play().catch(() => {});
+          // Si es la primera vez que se interactúa, activamos también el audio
+          if (audio.paused) audio.play().catch(() => {});
           registrarMovimiento();
         }
       });
 
+      // --- CONEXIÓN BLUETOOTH CON SENSOR MAGENE ---
       async function conectarSensor() {
         const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
         const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
+
         try {
-          statusText.innerText = "Buscando...";
-          const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [CSC_SERVICE_UUID] }] });
+          statusText.innerText = "Buscando sensor...";
+          
+          // Intentar arrancar audio (el clic en el botón lo permite)
+          audio.play().catch(err => console.log("Audio esperando conexión..."));
+
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ services: [CSC_SERVICE_UUID] }]
+          });
+
           const server = await device.gatt.connect();
           const service = await server.getPrimaryService(CSC_SERVICE_UUID);
           const characteristic = await service.getCharacteristic(CSC_CHARACTERISTIC_UUID);
+
           await characteristic.startNotifications();
           
+          // Escuchamos el contador de vueltas del sensor
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             let value = event.target.value;
             let cumulativeRev = value.getUint16(1, true); 
-            if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) registrarMovimiento();
+            if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
+              registrarMovimiento();
+            }
             lastRevolutions = cumulativeRev;
           });
 
-          statusText.innerText = "¡CONECTADO!";
+          statusText.innerText = "¡SENSOR CONECTADO!";
           statusText.style.color = "#4CAF50";
           
-          // Desaparece todo el cuadro a los 3 segundos
+          // Ocultamos la interfaz para dejar la vista limpia
           setTimeout(() => {
             uiContainer.style.transition = "opacity 1.5s";
             uiContainer.style.opacity = "0";
             setTimeout(() => uiContainer.style.display = 'none', 1500);
           }, 3000);
 
-        } catch (error) { 
-          statusText.innerText = "Error de conexión"; 
-          console.log(error);
+        } catch (error) {
+          statusText.innerText = "Error de conexión";
+          console.error(error);
         }
       }
 
+      // Función que se ejecuta con cada pedalada (real o espacio)
       function registrarMovimiento() {
         isPedaling = true;
-        targetPlaybackRate = 1.0; 
+        targetPlaybackRate = 1.0; // Velocidad normal de reproducción
+        
+        // Aseguramos que el video esté en marcha
         if (video.paused) video.play().catch(() => {});
+
+        // Si no recibimos nueva señal en 1.5 segundos, iniciamos el frenado
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
           isPedaling = false;
@@ -109,10 +148,15 @@
         }, 1500); 
       }
 
+      // --- BUCLE DE ANIMACIÓN (CONTROL DE INERCIA) ---
       function updateInertia() {
+        // Determinamos qué factor usar: aceleración lenta o frenado
         let factorSuavizado = (targetPlaybackRate > currentPlaybackRate) ? ACELERACION : FRENADO;
+
+        // Suavizamos el cambio de velocidad actual hacia la deseada
         currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * factorSuavizado;
 
+        // Solo aplicamos cambios si el video está cargado
         if (video.readyState >= 2) {
           if (currentPlaybackRate > 0.1) {
             try {
@@ -120,16 +164,20 @@
               if (video.paused) video.play().catch(() => {});
             } catch (e) {}
           } else {
+            // Si la velocidad es mínima, pausamos video pero dejamos audio
             try {
               if (video.playbackRate !== 0) video.playbackRate = 0;
               if (!isPedaling && !video.paused) video.pause();
             } catch (e) {}
           }
         }
+        
         requestAnimationFrame(updateInertia);
       }
 
+      // Iniciamos el ciclo
       updateInertia();
     </script>
   </body>
 </html>
+
