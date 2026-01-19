@@ -1,8 +1,15 @@
+Sí, exactamente. Todo va dentro del archivo index.html.
+
+Para evitar confusiones con trozos de código sueltos, aquí tienes el archivo completo y definitivo. He integrado las correcciones para que no falle el "playbackRate" y he optimizado la carga.
+
+Copia todo este bloque y pégalo en tu index.html en GitHub, borrando lo que tenías antes:
+
+HTML
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling Test - Simulator Mode</title>
+    <title>VR Cycling - Terapia Motora</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
@@ -11,10 +18,11 @@
         left: 20px;
         z-index: 999;
         font-family: sans-serif;
-        background: rgba(0,0,0,0.7);
+        background: rgba(0,0,0,0.8);
         padding: 20px;
         border-radius: 10px;
         color: white;
+        max-width: 300px;
       }
       .btn-connect {
         padding: 15px 25px;
@@ -24,11 +32,11 @@
         border: none;
         border-radius: 8px;
         cursor: pointer;
-        display: block;
+        width: 100%;
         margin-bottom: 10px;
       }
-      #status { font-size: 14px; }
-      .instrucciones { font-size: 12px; color: #ccc; margin-top: 10px; }
+      #status { font-size: 14px; font-weight: bold; }
+      .instrucciones { font-size: 12px; color: #bbb; margin-top: 10px; line-height: 1.4; }
     </style>
   </head>
   <body>
@@ -37,13 +45,21 @@
       <button class="btn-connect" onclick="conectarSensor()">1. Conectar Sensor Magene</button>
       <div id="status">Estado: Esperando conexión...</div>
       <div class="instrucciones">
-        <strong>Modo Prueba:</strong> Si no tienes sensor, pulsa la barra <strong>ESPACIO</strong> repetidamente para pedalear.
+        <strong>Modo Prueba:</strong> Haz clic en la pantalla y luego pulsa la barra <strong>ESPACIO</strong> para pedalear virtualmente.
       </div>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline></video>
+        <video id="video_asset" 
+               src="video_recorrido.mp4" 
+               preload="auto" 
+               loop="true" 
+               crossorigin="anonymous" 
+               playsinline 
+               webkit-playsinline 
+               muted>
+        </video>
       </a-assets>
 
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
@@ -54,9 +70,9 @@
     </a-scene>
 
     <script>
-      let video = document.getElementById('video_asset');
-      let statusText = document.getElementById('status');
-      let uiContainer = document.getElementById('ui-container');
+      const video = document.getElementById('video_asset');
+      const statusText = document.getElementById('status');
+      const uiContainer = document.getElementById('ui-container');
       
       let lastRevolutions = -1;
       let targetPlaybackRate = 0;
@@ -64,19 +80,23 @@
       let isPedaling = false;
       let stopTimeout;
 
-      // --- LÓGICA DE SIMULACIÓN (Para tus pruebas actuales) ---
+      // --- SIMULADOR CON TECLADO ---
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
-          console.log("Pedalada simulada con Espacio");
-          iniciarMovimiento();
+          console.log("Pedalada detectada (Espacio)");
+          // Desbloqueo del video si está pausado
+          if (video.paused) {
+            video.play().catch(err => console.log("Haga clic en la pantalla primero"));
+          }
+          registrarMovimiento();
         }
       });
 
-      // --- LÓGICA BLUETOOTH REAL ---
-      const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
-      const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
-
+      // --- CONEXIÓN BLUETOOTH MAGENE ---
       async function conectarSensor() {
+        const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
+        const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
+
         try {
           statusText.innerText = "Buscando sensor...";
           const device = await navigator.bluetooth.requestDevice({
@@ -92,15 +112,15 @@
             let value = event.target.value;
             let cumulativeRev = value.getUint16(1, true); 
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
-              iniciarMovimiento();
+              registrarMovimiento();
             }
             lastRevolutions = cumulativeRev;
           });
           
-          statusText.innerText = "¡CONECTADO!";
+          statusText.innerText = "¡SENSOR CONECTADO!";
           statusText.style.color = "#00FF00";
           
-          // OCULTAR INTERFAZ: Esperamos 3 segundos y escondemos todo el cuadro
+          // Esconder UI tras 3 segundos para limpiar la vista VR
           setTimeout(() => {
             uiContainer.style.transition = "opacity 1s";
             uiContainer.style.opacity = "0";
@@ -109,38 +129,50 @@
 
         } catch (error) {
           statusText.innerText = "Error: " + error;
+          console.error(error);
         }
       }
 
-      function iniciarMovimiento() {
+      function registrarMovimiento() {
         isPedaling = true;
         targetPlaybackRate = 1.0; 
         
-        if (video.paused) video.play();
+        if (video.paused) video.play().catch(() => {});
 
-        // Si no detecta pedalada en 2 segundos, inicia el freno
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
           isPedaling = false;
           targetPlaybackRate = 0;
-        }, 2000);
+        }, 1500); // Sensibilidad de parada (1.5 segundos)
       }
 
-      // Bucle de suavizado (Inercia)
+      // --- BUCLE DE ACTUALIZACIÓN (INERCIA) ---
       function updateInertia() {
-        // El factor 0.02 hace que el cambio sea muy gradual y agradable
-        currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * 0.02;
+        // Interpolación para suavidad
+        currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * 0.03;
 
-        if (currentPlaybackRate > 0.05) {
-          video.playbackRate = currentPlaybackRate;
-        } else {
-          video.playbackRate = 0;
-          if (!video.paused && !isPedaling) video.pause();
+        // Solo actuamos si el video ha cargado metadatos (readyState 2+)
+        if (video.readyState >= 2) {
+          // Si la velocidad es mayor a 0.1, aplicamos
+          if (currentPlaybackRate > 0.1) {
+            try {
+              video.playbackRate = currentPlaybackRate;
+              if (video.paused) video.play().catch(() => {});
+            } catch (e) {}
+          } else {
+            // Si es muy lento, detenemos suavemente
+            try {
+              if (video.playbackRate !== 0) video.playbackRate = 0;
+              if (!isPedaling && !video.paused) video.pause();
+            } catch (e) {}
+          }
         }
         requestAnimationFrame(updateInertia);
       }
 
+      // Iniciar el bucle
       updateInertia();
     </script>
   </body>
 </html>
+
