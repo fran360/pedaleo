@@ -2,39 +2,43 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Aceleración Suave</title>
+    <title>VR Cycling - Terapia Motora</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
+      /* Estilo limpio para la interfaz inicial */
       #ui-container {
-        position: absolute; top: 20px; left: 20px; z-index: 999;
-        font-family: sans-serif; background: rgba(0,0,0,0.8);
-        padding: 20px; border-radius: 10px; color: white; max-width: 300px;
+        position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%); /* Centrado en pantalla */
+        z-index: 999; font-family: sans-serif;
+        background: rgba(0,0,0,0.85); padding: 30px;
+        border-radius: 15px; color: white;
+        text-align: center; min-width: 250px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
       }
       .btn-connect {
-        padding: 15px 25px; font-size: 18px; background-color: #008CBA;
-        color: white; border: none; border-radius: 8px; cursor: pointer;
-        width: 100%; margin-bottom: 10px;
+        padding: 15px 30px; font-size: 18px;
+        background-color: #008CBA; color: white;
+        border: none; border-radius: 8px; cursor: pointer;
+        width: 100%; margin-bottom: 15px; font-weight: bold;
       }
-      #status { font-size: 14px; font-weight: bold; }
-      .instrucciones { font-size: 12px; color: #bbb; margin-top: 10px; line-height: 1.4; }
+      #status { font-size: 16px; opacity: 0.9; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <button class="btn-connect" onclick="conectarSensor()">1. Conectar Sensor Magene</button>
-      <div id="status">Estado: Esperando conexión...</div>
-      <div class="instrucciones">
-        <strong>Prueba de inercia:</strong> Haz clic y pulsa <strong>ESPACIO</strong>. Verás que ahora arranca y frena con suavidad.
-      </div>
+      <button class="btn-connect" onclick="conectarSensor()">CONECTAR SENSOR</button>
+      <div id="status">Estado: No conectado</div>
     </div>
 
     <a-scene>
       <a-assets>
         <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
       </a-assets>
+
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
-      <a-camera><a-cursor color="#FFF" fuse="false"></a-cursor></a-camera>
+
+      <a-camera look-controls></a-camera>
     </a-scene>
 
     <script>
@@ -48,10 +52,11 @@
       let stopTimeout;
       let lastRevolutions = -1;
 
-      // AJUSTES DE SENSACIÓN (Puedes tocar estos números)
-      const ACELERACION = 0.015; // Menor número = arranque más lento y pesado
-      const FRENADO = 0.025;     // Menor número = frena más lentamente (más inercia)
+      // AJUSTES DE SENSACIÓN
+      const ACELERACION = 0.015; 
+      const FRENADO = 0.025;
 
+      // Simulador oculto (Solo tú lo sabes)
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
           if (video.paused) video.play().catch(() => {});
@@ -63,22 +68,34 @@
         const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
         const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
         try {
-          statusText.innerText = "Buscando sensor...";
+          statusText.innerText = "Buscando...";
           const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [CSC_SERVICE_UUID] }] });
           const server = await device.gatt.connect();
           const service = await server.getPrimaryService(CSC_SERVICE_UUID);
           const characteristic = await service.getCharacteristic(CSC_CHARACTERISTIC_UUID);
           await characteristic.startNotifications();
+          
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             let value = event.target.value;
             let cumulativeRev = value.getUint16(1, true); 
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) registrarMovimiento();
             lastRevolutions = cumulativeRev;
           });
+
           statusText.innerText = "¡CONECTADO!";
-          statusText.style.color = "#00FF00";
-          setTimeout(() => { uiContainer.style.opacity = "0"; setTimeout(() => uiContainer.style.display = 'none', 1000); }, 3000);
-        } catch (error) { statusText.innerText = "Error: " + error; }
+          statusText.style.color = "#4CAF50";
+          
+          // Desaparece todo el cuadro a los 3 segundos
+          setTimeout(() => {
+            uiContainer.style.transition = "opacity 1.5s";
+            uiContainer.style.opacity = "0";
+            setTimeout(() => uiContainer.style.display = 'none', 1500);
+          }, 3000);
+
+        } catch (error) { 
+          statusText.innerText = "Error de conexión"; 
+          console.log(error);
+        }
       }
 
       function registrarMovimiento() {
@@ -93,10 +110,7 @@
       }
 
       function updateInertia() {
-        // Elegimos qué suavizado aplicar según si estamos acelerando o frenando
         let factorSuavizado = (targetPlaybackRate > currentPlaybackRate) ? ACELERACION : FRENADO;
-
-        // Cálculo de la velocidad actual
         currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * factorSuavizado;
 
         if (video.readyState >= 2) {
