@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>VR Therapy - Bike 360</title>
+    <meta name="description" content="Terapia Motora VR con Pedaleo">
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    
+    <style>
+      /* Botón de conexión sobrepuesto */
+      #ui-container {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 999;
+        font-family: Arial, sans-serif;
+      }
+      .btn-connect {
+        padding: 15px 25px;
+        font-size: 18px;
+        background-color: #008CBA;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      #status {
+        color: white;
+        background: rgba(0,0,0,0.5);
+        padding: 5px;
+        margin-top: 10px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div id="ui-container">
+      <button class="btn-connect" onclick="conectarSensor()">Conectar Sensor Magene</button>
+      <span id="status">Estado: Desconectado</span>
+    </div>
+
+    <a-scene>
+      <a-assets>
+        <video id="video_asset" 
+               src="video_recorrido.mp4" 
+               preload="auto" 
+               loop="true" 
+               crossorigin="anonymous"
+               playsinline 
+               webkit-playsinline>
+        </video>
+      </a-assets>
+
+      <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
+
+      <a-camera>
+        <a-cursor color="#FFF"></a-cursor>
+      </a-camera>
+    </a-scene>
+
+    <script>
+      let video = document.getElementById('video_asset');
+      let statusText = document.getElementById('status');
+      
+      let lastRevolutions = -1;
+      let targetPlaybackRate = 0;
+      let currentPlaybackRate = 0;
+      let isPedaling = false;
+      let stopTimeout;
+
+      // UUIDs estándar para Sensores de Ciclismo
+      const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
+      const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
+
+      async function conectarSensor() {
+        try {
+          statusText.innerText = "Buscando sensor...";
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ services: [CSC_SERVICE_UUID] }]
+          });
+
+          const server = await device.gatt.connect();
+          const service = await server.getPrimaryService(CSC_SERVICE_UUID);
+          const characteristic = await service.getCharacteristic(CSC_CHARACTERISTIC_UUID);
+
+          await characteristic.startNotifications();
+          characteristic.addEventListener('characteristicvaluechanged', handleData);
+          
+          statusText.innerText = "Estado: Conectado y Listo";
+          statusText.style.color = "#00FF00";
+          
+          // Ocultamos el botón tras conectar para no molestar
+          document.querySelector('.btn-connect').style.display = 'none';
+        } catch (error) {
+          console.log(error);
+          statusText.innerText = "Error: " + error;
+        }
+      }
+
+      function handleData(event) {
+        let value = event.target.value;
+        // El sensor Magene en modo cadencia envía las revoluciones acumuladas
+        let cumulativeRev = value.getUint16(1, true); 
+
+        if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
+          // Si el número de revoluciones ha cambiado, es que está pedaleando
+          iniciarMovimiento();
+        }
+        lastRevolutions = cumulativeRev;
+      }
+
+      function iniciarMovimiento() {
+        isPedaling = true;
+        targetPlaybackRate = 1.0; // Velocidad normal
+        
+        if (video.paused) video.play();
+
+        // Si pasan 2 segundos sin recibir datos del sensor, empezamos a frenar
+        clearTimeout(stopTimeout);
+        stopTimeout = setTimeout(() => {
+          isPedaling = false;
+          targetPlaybackRate = 0;
+        }, 2000);
+      }
+
+      // Bucle de suavizado (Inercia)
+      // Se ejecuta cada frame para que el cambio de velocidad no sea brusco
+      function updateInertia() {
+        // Interpolación lineal simple (Lerp)
+        // El valor 0.02 controla qué tan "suave" es la aceleración y el frenado
+        currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * 0.02;
+
+        if (currentPlaybackRate > 0.05) {
+          video.playbackRate = currentPlaybackRate;
+        } else {
+          video.playbackRate = 0;
+          if (!video.paused && !isPedaling) video.pause();
+        }
+
+        requestAnimationFrame(updateInertia);
+      }
+
+      // Iniciamos el bucle de suavizado
+      updateInertia();
+    </script>
+  </body>
+</html>
