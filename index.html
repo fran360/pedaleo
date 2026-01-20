@@ -2,28 +2,23 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Calibración y Test</title>
+    <title>VR Cycling - Debug Mode</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
-        position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 999; font-family: sans-serif;
-        background: rgba(0,0,0,0.9); padding: 30px;
-        border-radius: 20px; color: white;
-        text-align: center; min-width: 320px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.9);
+        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 350px;
       }
       .btn-connect {
-        padding: 20px; font-size: 18px;
-        background-color: #008CBA; color: white;
-        border: none; border-radius: 10px; cursor: pointer;
-        width: 100%; margin-bottom: 20px; font-weight: bold;
+        padding: 20px; font-size: 18px; background-color: #008CBA; color: white;
+        border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
       }
-      #status { 
-        font-size: 16px; 
-        color: #ffca28; /* Color naranja para advertencias */
-        word-wrap: break-word;
+      /* Consola para ver errores dentro de la gafa */
+      #debug-log {
+        margin-top: 15px; font-family: monospace; font-size: 12px;
+        color: #ffca28; text-align: left; background: #222; padding: 10px;
+        max-height: 100px; overflow-y: auto; border: 1px solid #444;
       }
     </style>
   </head>
@@ -31,7 +26,7 @@
 
     <div id="ui-container">
       <button class="btn-connect" onclick="conectarSensor()">CONECTAR SENSOR</button>
-      <div id="status">Estado: Listo para conectar</div>
+      <div id="debug-log">Log: Esperando acción...</div>
     </div>
 
     <a-scene>
@@ -39,7 +34,6 @@
         <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
-
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
       <a-camera look-controls></a-camera>
     </a-scene>
@@ -47,116 +41,85 @@
     <script>
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
-      const statusText = document.getElementById('status');
+      const log = document.getElementById('debug-log');
       const uiContainer = document.getElementById('ui-container');
-      
-      let targetPlaybackRate = 0;
-      let currentPlaybackRate = 0;
-      let isPedaling = false;
-      let stopTimeout;
-      let lastRevolutions = -1;
 
-      const ACELERACION = 0.015; 
-      const FRENADO = 0.025;
+      function printLog(msg) {
+        log.innerText = "Log: " + msg;
+        console.log(msg);
+      }
 
-      // Simulador oculto
+      // --- SIMULADOR OCULTO ---
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Space') {
-          if (video.paused) video.play().catch(() => {});
-          if (audio.paused) audio.play().catch(() => {});
+          printLog("Tecla Espacio detectada");
+          if (video.paused) video.play().catch(e => printLog("Error Play Video: " + e.message));
+          if (audio.paused) audio.play().catch(e => printLog("Error Play Audio: " + e.message));
           registrarMovimiento();
         }
       });
 
       async function conectarSensor() {
-        const CSC_SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
-        const CSC_CHARACTERISTIC_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
+        const SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
+        const CHAR_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
 
         try {
-          statusText.innerText = "Iniciando búsqueda...";
-          statusText.style.color = "#ffca28";
+          printLog("Llamando a requestDevice...");
+          
+          // El primer clic activa el audio
+          audio.play().catch(() => {});
 
-          // Intentar activar audio
-          audio.play().catch(() => console.log("Audio esperando..."));
-
-          // Solicitar dispositivo
           const device = await navigator.bluetooth.requestDevice({
-            filters: [{ services: [CSC_SERVICE_UUID] }]
+            filters: [{ services: [SERVICE_UUID] }]
           });
 
-          statusText.innerText = "Vinculando con " + device.name + "...";
-
+          printLog("Dispositivo encontrado: " + device.name);
           const server = await device.gatt.connect();
-          const service = await server.getPrimaryService(CSC_SERVICE_UUID);
-          const characteristic = await service.getCharacteristic(CSC_CHARACTERISTIC_UUID);
+          printLog("GATT Conectado");
+          
+          const service = await server.getPrimaryService(SERVICE_UUID);
+          const characteristic = await service.getCharacteristic(CHAR_UUID);
 
           await characteristic.startNotifications();
-          
-          characteristic.addEventListener('characteristicvaluechanged', (event) => {
-            let value = event.target.value;
-            let cumulativeRev = value.getUint16(1, true); 
-            if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
-              registrarMovimiento();
-            }
-            lastRevolutions = cumulativeRev;
+          printLog("Notificaciones activas. ¡Pedalea!");
+
+          characteristic.addEventListener('characteristicvaluechanged', (e) => {
+            registrarMovimiento();
           });
 
-          statusText.innerText = "¡CONECTADO!";
-          statusText.style.color = "#4CAF50";
-          
-          setTimeout(() => {
-            uiContainer.style.transition = "opacity 1.5s";
-            uiContainer.style.opacity = "0";
-            setTimeout(() => uiContainer.style.display = 'none', 1500);
-          }, 3000);
+          // Ocultar interfaz tras éxito
+          setTimeout(() => { uiContainer.style.display = 'none'; }, 3000);
 
         } catch (error) {
-          // REPORTE DE ERRORES DETALLADO
-          console.error(error);
-          if (error.name === 'NotFoundError') {
-            statusText.innerText = "Error: No se encontró el sensor. Asegúrate de que esté parpadeando en ROJO.";
-          } else if (error.name === 'SecurityError') {
-            statusText.innerText = "Error de Seguridad: Web Bluetooth requiere HTTPS o habilitar flags en el navegador.";
-          } else if (error.name === 'NotSupportedError') {
-            statusText.innerText = "Error: Este navegador no soporta Bluetooth Web.";
-          } else {
-            statusText.innerText = "Error: " + error.message;
-          }
-          statusText.style.color = "#ff5252";
+          printLog("ERROR: " + error.name + " - " + error.message);
         }
       }
 
+      let targetRate = 0;
+      let currentRate = 0;
+      let stopTimeout;
+
       function registrarMovimiento() {
-        isPedaling = true;
-        targetPlaybackRate = 1.0; 
+        targetRate = 1.0;
         if (video.paused) video.play().catch(() => {});
         clearTimeout(stopTimeout);
-        stopTimeout = setTimeout(() => {
-          isPedaling = false;
-          targetPlaybackRate = 0;
-        }, 1500); 
+        stopTimeout = setTimeout(() => { targetRate = 0; }, 1500);
       }
 
       function updateInertia() {
-        let factorSuavizado = (targetPlaybackRate > currentPlaybackRate) ? ACELERACION : FRENADO;
-        currentPlaybackRate += (targetPlaybackRate - currentPlaybackRate) * factorSuavizado;
-
+        let suavizado = (targetRate > currentRate) ? 0.015 : 0.025;
+        currentRate += (targetRate - currentRate) * suavizado;
         if (video.readyState >= 2) {
-          if (currentPlaybackRate > 0.1) {
-            try {
-              video.playbackRate = currentPlaybackRate;
-              if (video.paused) video.play().catch(() => {});
-            } catch (e) {}
+          if (currentRate > 0.1) {
+            video.playbackRate = currentRate;
+            if (video.paused) video.play().catch(() => {});
           } else {
-            try {
-              if (video.playbackRate !== 0) video.playbackRate = 0;
-              if (!isPedaling && !video.paused) video.pause();
-            } catch (e) {}
+            video.playbackRate = 0;
+            if (!video.paused && targetRate === 0) video.pause();
           }
         }
         requestAnimationFrame(updateInertia);
       }
-
       updateInertia();
     </script>
   </body>
