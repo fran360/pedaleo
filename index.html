@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Debug Mode</title>
+    <title>VR Cycling - Sensor Monitor</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
@@ -14,19 +14,18 @@
         padding: 20px; font-size: 18px; background-color: #008CBA; color: white;
         border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
       }
-      /* Consola para ver errores dentro de la gafa */
-      #debug-log {
-        margin-top: 15px; font-family: monospace; font-size: 12px;
-        color: #ffca28; text-align: left; background: #222; padding: 10px;
-        max-height: 100px; overflow-y: auto; border: 1px solid #444;
+      #data-display {
+        margin-top: 15px; font-size: 14px; color: #4CAF50; border-top: 1px solid #444; padding-top: 10px;
       }
+      #error-log { color: #ff5252; font-size: 12px; margin-top: 10px; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <button class="btn-connect" onclick="conectarSensor()">CONECTAR SENSOR</button>
-      <div id="debug-log">Log: Esperando acción...</div>
+      <button class="btn-connect" onclick="conectarSensor()">ENLAZAR CYCPLUS</button>
+      <div id="data-display">Esperando datos del sensor...</div>
+      <div id="error-log"></div>
     </div>
 
     <a-scene>
@@ -41,76 +40,73 @@
     <script>
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
-      const log = document.getElementById('debug-log');
+      const dataDisplay = document.getElementById('data-display');
+      const errorLog = document.getElementById('error-log');
       const uiContainer = document.getElementById('ui-container');
 
-      function printLog(msg) {
-        log.innerText = "Log: " + msg;
-        console.log(msg);
-      }
-
-      // --- SIMULADOR OCULTO ---
-      window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') {
-          printLog("Tecla Espacio detectada");
-          if (video.paused) video.play().catch(e => printLog("Error Play Video: " + e.message));
-          if (audio.paused) audio.play().catch(e => printLog("Error Play Audio: " + e.message));
-          registrarMovimiento();
-        }
-      });
-
-      async function conectarSensor() {
-        const SERVICE_UUID = '00001816-0000-1000-8000-00805f9b34fb';
-        const CHAR_UUID = '00002a5b-0000-1000-8000-00805f9b34fb';
-
-        try {
-          printLog("Llamando a requestDevice...");
-          
-          // El primer clic activa el audio
-          audio.play().catch(() => {});
-
-          const device = await navigator.bluetooth.requestDevice({
-            filters: [{ services: [SERVICE_UUID] }]
-          });
-
-          printLog("Dispositivo encontrado: " + device.name);
-          const server = await device.gatt.connect();
-          printLog("GATT Conectado");
-          
-          const service = await server.getPrimaryService(SERVICE_UUID);
-          const characteristic = await service.getCharacteristic(CHAR_UUID);
-
-          await characteristic.startNotifications();
-          printLog("Notificaciones activas. ¡Pedalea!");
-
-          characteristic.addEventListener('characteristicvaluechanged', (e) => {
-            registrarMovimiento();
-          });
-
-          // Ocultar interfaz tras éxito
-          setTimeout(() => { uiContainer.style.display = 'none'; }, 3000);
-
-        } catch (error) {
-          printLog("ERROR: " + error.name + " - " + error.message);
-        }
-      }
-
+      let lastRevolutions = -1;
       let targetRate = 0;
       let currentRate = 0;
       let stopTimeout;
 
+      async function conectarSensor() {
+        try {
+          errorLog.innerText = "";
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
+          });
+
+          const server = await device.gatt.connect();
+          const service = await server.getPrimaryService('00001816-0000-1000-8000-00805f9b34fb');
+          const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
+
+          await characteristic.startNotifications();
+          audio.play().catch(() => {});
+
+          characteristic.addEventListener('characteristicvaluechanged', (event) => {
+            const value = event.target.value;
+            // El estándar CSC dice: Byte 0 Flags, Byte 1-2 Cumulative Crank Revs
+            const flags = value.getUint8(0);
+            let crankDataOffset = 1;
+            
+            // Si el sensor envía datos de rueda, el de cadencia está más adelante
+            if (flags & 0x01) crankDataOffset += 6; 
+            
+            const cumulativeRev = value.getUint16(crankDataOffset, true);
+            
+            dataDisplay.innerText = "Revoluciones acumuladas: " + cumulativeRev;
+
+            // SOLO activamos movimiento si el número de vueltas ha CAMBIADO
+            if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
+              registrarMovimiento();
+            }
+            lastRevolutions = cumulativeRev;
+          });
+
+          dataDisplay.innerText = "¡Conectado! Empieza a pedalear.";
+          setTimeout(() => { uiContainer.style.opacity = "0.2"; }, 5000);
+
+        } catch (error) {
+          errorLog.innerText = "Error: " + error.message;
+        }
+      }
+
       function registrarMovimiento() {
         targetRate = 1.0;
         if (video.paused) video.play().catch(() => {});
+        
         clearTimeout(stopTimeout);
-        stopTimeout = setTimeout(() => { targetRate = 0; }, 1500);
+        stopTimeout = setTimeout(() => {
+          targetRate = 0; // Si no hay cambios en 2 segundos, paramos
+        }, 2000); 
       }
 
       function updateInertia() {
-        let suavizado = (targetRate > currentRate) ? 0.015 : 0.025;
+        let suavizado = (targetRate > currentRate) ? 0.01 : 0.03;
         currentRate += (targetRate - currentRate) * suavizado;
+
         if (video.readyState >= 2) {
-          if (currentRate > 0.1) {
+          if (currentRate > 0.05) {
             video.playbackRate = currentRate;
             if (video.paused) video.play().catch(() => {});
           } else {
