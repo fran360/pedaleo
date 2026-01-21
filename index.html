@@ -2,35 +2,46 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Test Final</title>
+    <title>VR Cycling - Fix Vídeo</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.8);
-        padding: 25px; border-radius: 15px; color: white; text-align: center; width: 300px;
-        transition: opacity 1s;
+        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.9);
+        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 300px;
       }
       .btn-connect {
-        padding: 15px; font-size: 18px; background-color: #008CBA; color: white;
-        border: none; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold;
+        padding: 20px; font-size: 18px; background-color: #008CBA; color: white;
+        border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
       }
-      #data-display { margin-top: 10px; font-size: 12px; color: #4CAF50; }
+      #status-info { margin-top: 15px; font-size: 14px; color: #4CAF50; line-height: 1.5; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <button class="btn-connect" onclick="conectarSensor()">ENLAZAR SENSOR</button>
-      <div id="data-display">Esperando sensor...</div>
+      <button class="btn-connect" id="btn-main" onclick="conectarSensor()">ENLAZAR SENSOR</button>
+      <div id="status-info">
+        1. Pulsa Enlazar<br>
+        2. Selecciona CYCPLUS<br>
+        3. El vídeo arrancará al pedalear
+      </div>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" 
-               crossorigin="anonymous" playsinline webkit-playsinline muted></video>
+        <video id="video_asset" 
+               src="video_recorrido.mp4" 
+               preload="auto" 
+               loop="true" 
+               crossorigin="anonymous" 
+               playsinline 
+               webkit-playsinline 
+               muted>
+        </video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
+      
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
       <a-camera look-controls></a-camera>
     </a-scene>
@@ -38,18 +49,23 @@
     <script>
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
-      const dataDisplay = document.getElementById('data-display');
+      const statusInfo = document.getElementById('status-info');
       const uiContainer = document.getElementById('ui-container');
 
       let lastRevolutions = -1;
       let targetRate = 0;
       let currentRate = 0;
       let stopTimeout;
+      let motorActivo = false;
 
       async function conectarSensor() {
         try {
-          // 1. FORZAR PLAY: Desbloqueamos audio y video con el clic del botón
-          video.play().then(() => { video.pause(); }); 
+          // GESTO INICIAL: Esto "despierta" el vídeo para el navegador
+          video.play().then(() => {
+            video.pause();
+            video.currentTime = 0;
+            statusInfo.innerText = "Vídeo listo. Buscando CYCPLUS...";
+          });
           audio.play().catch(() => {});
 
           const device = await navigator.bluetooth.requestDevice({
@@ -61,61 +77,69 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
+          statusInfo.innerText = "¡CONECTADO! Dale a los pedales.";
+          motorActivo = true;
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
             const flags = value.getUint8(0);
             let offset = 1;
-            if (flags & 0x01) offset += 6; // Saltar datos de rueda si existen
+            if (flags & 0x01) offset += 6; // Ajuste protocolo CSC
             
             const cumulativeRev = value.getUint16(offset, true);
-            dataDisplay.innerText = "Pedaladas detectadas: " + cumulativeRev;
-
+            
+            // Si hay cambio de vueltas, movemos
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
               registrarMovimiento();
             }
             lastRevolutions = cumulativeRev;
           });
 
-          dataDisplay.innerText = "¡CONECTADO! Empieza a pedalear.";
-          // Ocultar UI parcialmente para no molestar
-          setTimeout(() => { uiContainer.style.opacity = "0.3"; }, 3000);
-
         } catch (error) {
-          dataDisplay.innerText = "Error: " + error.message;
+          statusInfo.innerText = "Error: " + error.message;
+          statusInfo.style.color = "red";
         }
       }
 
       function registrarMovimiento() {
-        targetRate = 1.0; 
-        // Forzamos el play cada vez que detectamos movimiento real
-        if (video.paused) video.play().catch(() => {});
+        targetRate = 1.0;
+        
+        // Desvanecer UI totalmente en la primera pedalada
+        if (uiContainer.style.display !== 'none') {
+           uiContainer.style.transition = "opacity 1s";
+           uiContainer.style.opacity = "0";
+           setTimeout(() => uiContainer.style.display = 'none', 1000);
+        }
+
+        // Forzar arranque si está pausado
+        if (video.paused) {
+          video.play().catch(e => console.log("Error al arrancar: ", e));
+        }
         
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
           targetRate = 0;
-        }, 1800); // Margen de 1.8 segundos entre pedaladas
+        }, 1500); 
       }
 
       function updateInertia() {
-        // Suavizado de aceleración y frenado
-        let suavizado = (targetRate > currentRate) ? 0.02 : 0.04;
+        // Suavizado simplificado
+        let suavizado = (targetRate > currentRate) ? 0.05 : 0.02;
         currentRate += (targetRate - currentRate) * suavizado;
 
-        // Si hay velocidad suficiente, aplicamos al video
-        if (currentRate > 0.02) {
-          video.playbackRate = currentRate;
-          if (video.paused) video.play().catch(() => {});
-        } else {
-          // Parada suave
-          if (video.playbackRate !== 0) video.playbackRate = 0;
-          if (!video.paused && targetRate === 0) video.pause();
+        if (video.readyState >= 2) {
+          if (currentRate > 0.01) {
+            // Aplicamos la velocidad. Si es muy baja, algunos móviles no lo mueven
+            video.playbackRate = Math.max(currentRate, 0.1); 
+            if (video.paused) video.play().catch(() => {});
+          } else {
+            video.playbackRate = 0;
+            if (!video.paused && targetRate === 0) video.pause();
+          }
         }
-        
         requestAnimationFrame(updateInertia);
       }
 
-      // Arrancar el bucle de renderizado
       updateInertia();
     </script>
   </body>
