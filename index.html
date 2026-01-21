@@ -2,50 +2,35 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Depuración Total</title>
+    <title>VR Cycling - Inercia Fix</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.95);
-        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 320px;
+        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.9);
+        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 300px;
       }
-      .btn {
-        padding: 15px; font-size: 16px; border: none; border-radius: 8px; 
-        cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px;
+      .btn-connect {
+        padding: 20px; font-size: 18px; background-color: #008CBA; color: white;
+        border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
       }
-      .btn-connect { background-color: #008CBA; color: white; }
-      .btn-test { background-color: #4CAF50; color: white; display: none; }
-      #status { font-size: 13px; color: #aaa; margin-top: 10px; }
-      #counter { font-size: 24px; color: #00FF00; margin: 10px 0; font-weight: bold; }
+      #status-text { margin-top: 15px; font-size: 14px; color: #4CAF50; }
+      #debug-rate { font-size: 10px; color: #888; margin-top: 5px; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <div id="status">PASO 1: Toca el botón azul</div>
-      <button class="btn btn-connect" onclick="iniciarTodo()">1. ENLAZAR Y ACTIVAR</button>
-      
-      <div id="counter">0</div>
-      <div id="status-extra">Esperando...</div>
-
-      <button id="btn-emergency" class="btn btn-test" onclick="forzarPlay()">¿VÍDEO PARADO? TOCA AQUÍ</button>
+      <button class="btn-connect" onclick="iniciarTodo()">CONECTAR Y ACTIVAR</button>
+      <div id="status-text">Toca para enlazar el sensor</div>
+      <div id="debug-rate">Velocidad: 0.0</div>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" 
-               src="video_recorrido.mp4" 
-               preload="auto" 
-               loop="true" 
-               crossorigin="anonymous" 
-               playsinline 
-               webkit-playsinline 
-               muted>
-        </video>
+        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
-      
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
       <a-camera look-controls></a-camera>
     </a-scene>
@@ -53,26 +38,27 @@
     <script>
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
-      const counterDisplay = document.getElementById('counter');
-      const statusExtra = document.getElementById('status-extra');
-      const btnEmergency = document.getElementById('btn-emergency');
+      const statusText = document.getElementById('status-text');
+      const debugRate = document.getElementById('debug-rate');
       const uiContainer = document.getElementById('ui-container');
 
       let lastRevolutions = -1;
+      let targetRate = 0;    
+      let currentRate = 0;   
       let stopTimeout;
-      let enlazado = false;
 
-      // PASO 1: El clic del usuario activa el sensor Y el permiso de vídeo
+      // --- AJUSTES DE INERCIA ---
+      const ACELERACION = 0.015; 
+      const FRENADO = 0.03;      
+
       async function iniciarTodo() {
         try {
-          statusExtra.innerText = "Desbloqueando motor de vídeo...";
-          
-          // Gesto de desbloqueo obligatorio
-          video.play();
-          setTimeout(() => { video.pause(); }, 100); 
+          // GESTO DE DESBLOQUEO CRÍTICO: Necesario para móviles y VR
+          video.play().then(() => { video.pause(); });
           audio.play().catch(() => {});
+          
+          statusText.innerText = "Buscando CYCPLUS...";
 
-          statusExtra.innerText = "Buscando CYCPLUS...";
           const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
           });
@@ -82,58 +68,65 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
-          
-          enlazado = true;
-          statusExtra.innerText = "¡CONECTADO! Mueve el sensor.";
-          btnEmergency.style.display = "block"; // Mostrar botón de emergencia por si acaso
+          statusText.innerText = "¡CONECTADO! Mueve el pedal.";
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
             const flags = value.getUint8(0);
             let offset = 1;
-            if (flags & 0x01) offset += 6; 
-            
+            if (flags & 0x01) offset += 6; // Saltar datos de rueda
             const cumulativeRev = value.getUint16(offset, true);
-            counterDisplay.innerText = cumulativeRev;
 
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
-              pedaladaDetectada();
+              registrarPedalada();
             }
             lastRevolutions = cumulativeRev;
           });
 
         } catch (error) {
-          statusExtra.innerText = "Error: " + error.message;
+          statusText.innerText = "Error: " + error.message;
         }
       }
 
-      function pedaladaDetectada() {
-        // Si hay movimiento, el vídeo debe sonar y moverse
-        if (video.paused) {
-          video.play().catch(() => {
-            statusExtra.innerText = "Error: El navegador bloquea el vídeo.";
-          });
-        }
-        
-        // Mantener velocidad normal (1.0) mientras pedalee
-        video.playbackRate = 1.0;
+      function registrarPedalada() {
+        targetRate = 1.0; 
 
-        // Ocultar interfaz al empezar a pedalear
         if (uiContainer.style.display !== 'none') {
           uiContainer.style.display = 'none';
         }
 
+        // Cada pedalada fuerza el play si estaba pausado
+        if (video.paused) {
+          video.play().catch(e => console.error("Error al arrancar video: ", e));
+        }
+
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
-          // Parada inmediata tras 2 segundos de inactividad
-          video.pause();
-        }, 2000);
+          targetRate = 0; 
+        }, 1800); 
       }
 
-      function forzarPlay() {
-        video.play();
-        uiContainer.style.display = 'none';
+      function motorInercia() {
+        let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
+        currentRate += (targetRate - currentRate) * factor;
+
+        if (video.readyState >= 2) { 
+          // Umbral mínimo: si la velocidad es muy baja, los navegadores la ignoran
+          if (currentRate > 0.05) { 
+            video.playbackRate = currentRate;
+            debugRate.innerText = "Velocidad: " + currentRate.toFixed(2);
+            if (video.paused) video.play().catch(() => {});
+          } else {
+            // Parada total limpia
+            video.playbackRate = 0;
+            if (!video.paused && targetRate === 0) video.pause();
+            debugRate.innerText = "Velocidad: 0.0 (Parado)";
+          }
+        }
+        requestAnimationFrame(motorInercia);
       }
+
+      motorInercia();
     </script>
   </body>
 </html>
