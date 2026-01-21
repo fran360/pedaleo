@@ -15,6 +15,7 @@
         border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
       }
       #status-text { margin-top: 15px; font-size: 14px; color: #4CAF50; }
+      #debug-rate { font-size: 10px; color: #888; margin-top: 5px; }
     </style>
   </head>
   <body>
@@ -22,19 +23,12 @@
     <div id="ui-container">
       <button class="btn-connect" onclick="iniciarTodo()">CONECTAR Y ACTIVAR</button>
       <div id="status-text">Toca para enlazar el sensor</div>
+      <div id="debug-rate">Velocidad: 0.0</div>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" 
-               src="video_recorrido.mp4" 
-               preload="auto" 
-               loop="true" 
-               crossorigin="anonymous" 
-               playsinline 
-               webkit-playsinline 
-               muted>
-        </video>
+        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
@@ -45,13 +39,13 @@
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
       const statusText = document.getElementById('status-text');
+      const debugRate = document.getElementById('debug-rate');
       const uiContainer = document.getElementById('ui-container');
 
       let lastRevolutions = -1;
       let targetRate = 0;    
       let currentRate = 0;   
       let stopTimeout;
-      let isEnlazado = false;
 
       // --- AJUSTES DE INERCIA ---
       const ACELERACION = 0.015; 
@@ -59,12 +53,11 @@
 
       async function iniciarTodo() {
         try {
-          // GESTO DE DESBLOQUEO CRÍTICO: El navegador necesita esto
-          video.play(); 
-          video.pause();
+          // GESTO DE DESBLOQUEO CRÍTICO: Necesario para móviles y VR
+          video.play().then(() => { video.pause(); });
           audio.play().catch(() => {});
           
-          statusText.innerText = "Buscando sensor CYCPLUS...";
+          statusText.innerText = "Buscando CYCPLUS...";
 
           const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
@@ -75,15 +68,13 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
-          
-          isEnlazado = true;
           statusText.innerText = "¡CONECTADO! Mueve el pedal.";
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
             const flags = value.getUint8(0);
             let offset = 1;
-            if (flags & 0x01) offset += 6; 
+            if (flags & 0x01) offset += 6; // Saltar datos de rueda
             const cumulativeRev = value.getUint16(offset, true);
 
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
@@ -100,12 +91,11 @@
       function registrarPedalada() {
         targetRate = 1.0; 
 
-        // Ocultar interfaz al detectar la primera pedalada
         if (uiContainer.style.display !== 'none') {
           uiContainer.style.display = 'none';
         }
 
-        // Si el video está pausado, lo forzamos a arrancar
+        // Cada pedalada fuerza el play si estaba pausado
         if (video.paused) {
           video.play().catch(e => console.error("Error al arrancar video: ", e));
         }
@@ -117,29 +107,25 @@
       }
 
       function motorInercia() {
-        // Calculamos el factor de suavizado
         let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
-
-        // Suavizamos el cambio de velocidad
         currentRate += (targetRate - currentRate) * factor;
 
-        // Comprobamos el estado del video
         if (video.readyState >= 2) { 
-          if (currentRate > 0.05) { // Umbral mínimo para evitar que el navegador lo congele
+          // Umbral mínimo: si la velocidad es muy baja, los navegadores la ignoran
+          if (currentRate > 0.05) { 
             video.playbackRate = currentRate;
-            // Si por algún motivo se pausó solo, lo despertamos
+            debugRate.innerText = "Velocidad: " + currentRate.toFixed(2);
             if (video.paused) video.play().catch(() => {});
           } else {
-            // Parada total
-            if (video.playbackRate !== 0) video.playbackRate = 0;
+            // Parada total limpia
+            video.playbackRate = 0;
             if (!video.paused && targetRate === 0) video.pause();
+            debugRate.innerText = "Velocidad: 0.0 (Parado)";
           }
         }
-        
         requestAnimationFrame(motorInercia);
       }
 
-      // Arrancamos el motor de inercia
       motorInercia();
     </script>
   </body>
