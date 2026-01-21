@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Depuración Total</title>
+    <title>VR Cycling - Inercia sobre Base Estable</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
@@ -62,12 +62,16 @@
       let stopTimeout;
       let enlazado = false;
 
-      // PASO 1: El clic del usuario activa el sensor Y el permiso de vídeo
+      // VARIABLES DE INERCIA
+      let targetRate = 0;    // Lo que queremos (0 parado, 1 moviendo)
+      let currentRate = 0;   // Lo que hay ahora mismo
+      const ACELERACION = 0.02; // Suavidad al arrancar
+      const FRENADO = 0.01;     // Suavidad al frenar (inercia)
+
       async function iniciarTodo() {
         try {
           statusExtra.innerText = "Desbloqueando motor de vídeo...";
           
-          // Gesto de desbloqueo obligatorio
           video.play();
           setTimeout(() => { video.pause(); }, 100); 
           audio.play().catch(() => {});
@@ -85,7 +89,7 @@
           
           enlazado = true;
           statusExtra.innerText = "¡CONECTADO! Mueve el sensor.";
-          btnEmergency.style.display = "block"; // Mostrar botón de emergencia por si acaso
+          btnEmergency.style.display = "block"; 
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
@@ -102,37 +106,59 @@
             lastRevolutions = cumulativeRev;
           });
 
+          // INICIAMOS EL BUCLE DE SUAVIZADO
+          actualizarInercia();
+
         } catch (error) {
           statusExtra.innerText = "Error: " + error.message;
         }
       }
 
       function pedaladaDetectada() {
-        // Si hay movimiento, el vídeo debe sonar y moverse
+        targetRate = 1.0; // Queremos que el vídeo llegue a velocidad 1
+
         if (video.paused) {
-          video.play().catch(() => {
-            statusExtra.innerText = "Error: El navegador bloquea el vídeo.";
-          });
+          video.play().catch(() => {});
         }
         
-        // Mantener velocidad normal (1.0) mientras pedalee
-        video.playbackRate = 1.0;
-
-        // Ocultar interfaz al empezar a pedalear
         if (uiContainer.style.display !== 'none') {
           uiContainer.style.display = 'none';
         }
 
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
-          // Parada inmediata tras 2 segundos de inactividad
-          video.pause();
+          targetRate = 0; // Tras 2 segundos sin pedalear, el objetivo es 0
         }, 2000);
+      }
+
+      // ESTA FUNCIÓN ES LA QUE HACE LA MAGIA DEL SUAVIZADO
+      function actualizarInercia() {
+        // Elegimos si aplicamos aceleración o frenado
+        let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
+
+        // Acercamos la velocidad actual poco a poco al objetivo
+        currentRate += (targetRate - currentRate) * factor;
+
+        // Si la velocidad es mínima, aplicamos al vídeo
+        if (currentRate > 0.01) {
+          video.playbackRate = currentRate;
+          if (video.paused && targetRate > 0) video.play().catch(() => {});
+        } else {
+          // Si ya casi no se mueve, paramos el vídeo del todo
+          if (!video.paused && targetRate === 0) {
+            video.pause();
+            video.playbackRate = 0;
+          }
+        }
+
+        requestAnimationFrame(actualizarInercia);
       }
 
       function forzarPlay() {
         video.play();
         uiContainer.style.display = 'none';
+        targetRate = 1.0;
+        currentRate = 1.0;
       }
     </script>
   </body>
