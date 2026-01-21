@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Inercia sobre Base Estable</title>
+    <title>VR Cycling - Inercia con Arrancador</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
@@ -25,27 +25,16 @@
     <div id="ui-container">
       <div id="status">PASO 1: Toca el botón azul</div>
       <button class="btn btn-connect" onclick="iniciarTodo()">1. ENLAZAR Y ACTIVAR</button>
-      
       <div id="counter">0</div>
       <div id="status-extra">Esperando...</div>
-
       <button id="btn-emergency" class="btn btn-test" onclick="forzarPlay()">¿VÍDEO PARADO? TOCA AQUÍ</button>
     </div>
 
     <a-scene>
       <a-assets>
-        <video id="video_asset" 
-               src="video_recorrido.mp4" 
-               preload="auto" 
-               loop="true" 
-               crossorigin="anonymous" 
-               playsinline 
-               webkit-playsinline 
-               muted>
-        </video>
+        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
-      
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
       <a-camera look-controls></a-camera>
     </a-scene>
@@ -60,23 +49,19 @@
 
       let lastRevolutions = -1;
       let stopTimeout;
-      let enlazado = false;
-
-      // VARIABLES DE INERCIA
-      let targetRate = 0;    // Lo que queremos (0 parado, 1 moviendo)
-      let currentRate = 0;   // Lo que hay ahora mismo
-      const ACELERACION = 0.02; // Suavidad al arrancar
-      const FRENADO = 0.01;     // Suavidad al frenar (inercia)
+      
+      let targetRate = 0;    
+      let currentRate = 0;   
+      const ACELERACION = 0.03; // Un poco más rápido para salir de la zona muerta
+      const FRENADO = 0.015;     
 
       async function iniciarTodo() {
         try {
-          statusExtra.innerText = "Desbloqueando motor de vídeo...";
-          
+          statusExtra.innerText = "Activando motor de vídeo...";
           video.play();
           setTimeout(() => { video.pause(); }, 100); 
           audio.play().catch(() => {});
 
-          statusExtra.innerText = "Buscando CYCPLUS...";
           const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
           });
@@ -87,8 +72,7 @@
 
           await characteristic.startNotifications();
           
-          enlazado = true;
-          statusExtra.innerText = "¡CONECTADO! Mueve el sensor.";
+          statusExtra.innerText = "¡CONECTADO! Pedalea.";
           btnEmergency.style.display = "block"; 
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
@@ -96,7 +80,6 @@
             const flags = value.getUint8(0);
             let offset = 1;
             if (flags & 0x01) offset += 6; 
-            
             const cumulativeRev = value.getUint16(offset, true);
             counterDisplay.innerText = cumulativeRev;
 
@@ -106,7 +89,6 @@
             lastRevolutions = cumulativeRev;
           });
 
-          // INICIAMOS EL BUCLE DE SUAVIZADO
           actualizarInercia();
 
         } catch (error) {
@@ -115,7 +97,12 @@
       }
 
       function pedaladaDetectada() {
-        targetRate = 1.0; // Queremos que el vídeo llegue a velocidad 1
+        targetRate = 1.0; 
+
+        // --- EL TRUCO: Si estamos casi parados, damos un empujón inicial ---
+        if (currentRate < 0.2) {
+          currentRate = 0.2; // Saltamos la zona muerta
+        }
 
         if (video.paused) {
           video.play().catch(() => {});
@@ -127,30 +114,24 @@
 
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
-          targetRate = 0; // Tras 2 segundos sin pedalear, el objetivo es 0
+          targetRate = 0; 
         }, 2000);
       }
 
-      // ESTA FUNCIÓN ES LA QUE HACE LA MAGIA DEL SUAVIZADO
       function actualizarInercia() {
-        // Elegimos si aplicamos aceleración o frenado
         let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
-
-        // Acercamos la velocidad actual poco a poco al objetivo
         currentRate += (targetRate - currentRate) * factor;
 
-        // Si la velocidad es mínima, aplicamos al vídeo
-        if (currentRate > 0.01) {
+        if (currentRate > 0.08) { // Umbral mínimo de seguridad para el navegador
           video.playbackRate = currentRate;
-          if (video.paused && targetRate > 0) video.play().catch(() => {});
+          if (video.paused) video.play().catch(() => {});
         } else {
-          // Si ya casi no se mueve, paramos el vídeo del todo
           if (!video.paused && targetRate === 0) {
             video.pause();
+            currentRate = 0;
             video.playbackRate = 0;
           }
         }
-
         requestAnimationFrame(actualizarInercia);
       }
 
@@ -158,7 +139,7 @@
         video.play();
         uiContainer.style.display = 'none';
         targetRate = 1.0;
-        currentRate = 1.0;
+        currentRate = 0.5; // Empezar directamente a media velocidad
       }
     </script>
   </body>
