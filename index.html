@@ -2,30 +2,34 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Fix Vídeo</title>
+    <title>VR Cycling - Depuración Total</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.9);
-        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 300px;
+        z-index: 999; font-family: sans-serif; background: rgba(0,0,0,0.95);
+        padding: 30px; border-radius: 20px; color: white; text-align: center; width: 320px;
       }
-      .btn-connect {
-        padding: 20px; font-size: 18px; background-color: #008CBA; color: white;
-        border: none; border-radius: 10px; cursor: pointer; width: 100%; font-weight: bold;
+      .btn {
+        padding: 15px; font-size: 16px; border: none; border-radius: 8px; 
+        cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px;
       }
-      #status-info { margin-top: 15px; font-size: 14px; color: #4CAF50; line-height: 1.5; }
+      .btn-connect { background-color: #008CBA; color: white; }
+      .btn-test { background-color: #4CAF50; color: white; display: none; }
+      #status { font-size: 13px; color: #aaa; margin-top: 10px; }
+      #counter { font-size: 24px; color: #00FF00; margin: 10px 0; font-weight: bold; }
     </style>
   </head>
   <body>
 
     <div id="ui-container">
-      <button class="btn-connect" id="btn-main" onclick="conectarSensor()">ENLAZAR SENSOR</button>
-      <div id="status-info">
-        1. Pulsa Enlazar<br>
-        2. Selecciona CYCPLUS<br>
-        3. El vídeo arrancará al pedalear
-      </div>
+      <div id="status">PASO 1: Toca el botón azul</div>
+      <button class="btn btn-connect" onclick="iniciarTodo()">1. ENLAZAR Y ACTIVAR</button>
+      
+      <div id="counter">0</div>
+      <div id="status-extra">Esperando...</div>
+
+      <button id="btn-emergency" class="btn btn-test" onclick="forzarPlay()">¿VÍDEO PARADO? TOCA AQUÍ</button>
     </div>
 
     <a-scene>
@@ -49,25 +53,26 @@
     <script>
       const video = document.getElementById('video_asset');
       const audio = document.getElementById('audio_ambiente');
-      const statusInfo = document.getElementById('status-info');
+      const counterDisplay = document.getElementById('counter');
+      const statusExtra = document.getElementById('status-extra');
+      const btnEmergency = document.getElementById('btn-emergency');
       const uiContainer = document.getElementById('ui-container');
 
       let lastRevolutions = -1;
-      let targetRate = 0;
-      let currentRate = 0;
       let stopTimeout;
-      let motorActivo = false;
+      let enlazado = false;
 
-      async function conectarSensor() {
+      // PASO 1: El clic del usuario activa el sensor Y el permiso de vídeo
+      async function iniciarTodo() {
         try {
-          // GESTO INICIAL: Esto "despierta" el vídeo para el navegador
-          video.play().then(() => {
-            video.pause();
-            video.currentTime = 0;
-            statusInfo.innerText = "Vídeo listo. Buscando CYCPLUS...";
-          });
+          statusExtra.innerText = "Desbloqueando motor de vídeo...";
+          
+          // Gesto de desbloqueo obligatorio
+          video.play();
+          setTimeout(() => { video.pause(); }, 100); 
           audio.play().catch(() => {});
 
+          statusExtra.innerText = "Buscando CYCPLUS...";
           const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
           });
@@ -77,70 +82,58 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
-          statusInfo.innerText = "¡CONECTADO! Dale a los pedales.";
-          motorActivo = true;
+          
+          enlazado = true;
+          statusExtra.innerText = "¡CONECTADO! Mueve el sensor.";
+          btnEmergency.style.display = "block"; // Mostrar botón de emergencia por si acaso
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
             const flags = value.getUint8(0);
             let offset = 1;
-            if (flags & 0x01) offset += 6; // Ajuste protocolo CSC
+            if (flags & 0x01) offset += 6; 
             
             const cumulativeRev = value.getUint16(offset, true);
-            
-            // Si hay cambio de vueltas, movemos
+            counterDisplay.innerText = cumulativeRev;
+
             if (lastRevolutions !== -1 && cumulativeRev !== lastRevolutions) {
-              registrarMovimiento();
+              pedaladaDetectada();
             }
             lastRevolutions = cumulativeRev;
           });
 
         } catch (error) {
-          statusInfo.innerText = "Error: " + error.message;
-          statusInfo.style.color = "red";
+          statusExtra.innerText = "Error: " + error.message;
         }
       }
 
-      function registrarMovimiento() {
-        targetRate = 1.0;
+      function pedaladaDetectada() {
+        // Si hay movimiento, el vídeo debe sonar y moverse
+        if (video.paused) {
+          video.play().catch(() => {
+            statusExtra.innerText = "Error: El navegador bloquea el vídeo.";
+          });
+        }
         
-        // Desvanecer UI totalmente en la primera pedalada
+        // Mantener velocidad normal (1.0) mientras pedalee
+        video.playbackRate = 1.0;
+
+        // Ocultar interfaz al empezar a pedalear
         if (uiContainer.style.display !== 'none') {
-           uiContainer.style.transition = "opacity 1s";
-           uiContainer.style.opacity = "0";
-           setTimeout(() => uiContainer.style.display = 'none', 1000);
+          uiContainer.style.display = 'none';
         }
 
-        // Forzar arranque si está pausado
-        if (video.paused) {
-          video.play().catch(e => console.log("Error al arrancar: ", e));
-        }
-        
         clearTimeout(stopTimeout);
         stopTimeout = setTimeout(() => {
-          targetRate = 0;
-        }, 1500); 
+          // Parada inmediata tras 2 segundos de inactividad
+          video.pause();
+        }, 2000);
       }
 
-      function updateInertia() {
-        // Suavizado simplificado
-        let suavizado = (targetRate > currentRate) ? 0.05 : 0.02;
-        currentRate += (targetRate - currentRate) * suavizado;
-
-        if (video.readyState >= 2) {
-          if (currentRate > 0.01) {
-            // Aplicamos la velocidad. Si es muy baja, algunos móviles no lo mueven
-            video.playbackRate = Math.max(currentRate, 0.1); 
-            if (video.paused) video.play().catch(() => {});
-          } else {
-            video.playbackRate = 0;
-            if (!video.paused && targetRate === 0) video.pause();
-          }
-        }
-        requestAnimationFrame(updateInertia);
+      function forzarPlay() {
+        video.play();
+        uiContainer.style.display = 'none';
       }
-
-      updateInertia();
     </script>
   </body>
 </html>
