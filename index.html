@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Inercia con Arrancador</title>
+    <title>VR Cycling - Arranque Rápido</title>
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <style>
       #ui-container {
@@ -15,7 +15,6 @@
         cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px;
       }
       .btn-connect { background-color: #008CBA; color: white; }
-      .btn-test { background-color: #4CAF50; color: white; display: none; }
       #status { font-size: 13px; color: #aaa; margin-top: 10px; }
       #counter { font-size: 24px; color: #00FF00; margin: 10px 0; font-weight: bold; }
     </style>
@@ -26,8 +25,7 @@
       <div id="status">PASO 1: Toca el botón azul</div>
       <button class="btn btn-connect" onclick="iniciarTodo()">1. ENLAZAR Y ACTIVAR</button>
       <div id="counter">0</div>
-      <div id="status-extra">Esperando...</div>
-      <button id="btn-emergency" class="btn btn-test" onclick="forzarPlay()">¿VÍDEO PARADO? TOCA AQUÍ</button>
+      <div id="status-extra">Esperando conexión...</div>
     </div>
 
     <a-scene>
@@ -44,7 +42,6 @@
       const audio = document.getElementById('audio_ambiente');
       const counterDisplay = document.getElementById('counter');
       const statusExtra = document.getElementById('status-extra');
-      const btnEmergency = document.getElementById('btn-emergency');
       const uiContainer = document.getElementById('ui-container');
 
       let lastRevolutions = -1;
@@ -52,12 +49,14 @@
       
       let targetRate = 0;    
       let currentRate = 0;   
-      const ACELERACION = 0.03; // Un poco más rápido para salir de la zona muerta
-      const FRENADO = 0.015;     
+
+      // --- AJUSTES DE RESPUESTA ---
+      const ACELERACION = 0.06; // Antes 0.03. Ahora arranca el doble de rápido.
+      const FRENADO = 0.015;    // Mantiene la misma inercia al parar.
 
       async function iniciarTodo() {
         try {
-          statusExtra.innerText = "Activando motor de vídeo...";
+          statusExtra.innerText = "Desbloqueando vídeo...";
           video.play();
           setTimeout(() => { video.pause(); }, 100); 
           audio.play().catch(() => {});
@@ -71,9 +70,7 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
-          
           statusExtra.innerText = "¡CONECTADO! Pedalea.";
-          btnEmergency.style.display = "block"; 
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
@@ -99,9 +96,11 @@
       function pedaladaDetectada() {
         targetRate = 1.0; 
 
-        // --- EL TRUCO: Si estamos casi parados, damos un empujón inicial ---
-        if (currentRate < 0.2) {
-          currentRate = 0.2; // Saltamos la zona muerta
+        // --- ARRANQUE TURBO ---
+        // Si el vídeo estaba casi parado, saltamos a 0.4 de golpe para que reaccione ya.
+        if (currentRate < 0.4) {
+          currentRate = 0.4; 
+          video.playbackRate = currentRate;
         }
 
         if (video.paused) {
@@ -122,7 +121,7 @@
         let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
         currentRate += (targetRate - currentRate) * factor;
 
-        if (currentRate > 0.08) { // Umbral mínimo de seguridad para el navegador
+        if (currentRate > 0.1) { // Umbral de movimiento
           video.playbackRate = currentRate;
           if (video.paused) video.play().catch(() => {});
         } else {
@@ -133,13 +132,6 @@
           }
         }
         requestAnimationFrame(actualizarInercia);
-      }
-
-      function forzarPlay() {
-        video.play();
-        uiContainer.style.display = 'none';
-        targetRate = 1.0;
-        currentRate = 0.5; // Empezar directamente a media velocidad
       }
     </script>
   </body>
