@@ -2,8 +2,15 @@
 <html lang="es">
   <head>
     <meta charset="utf-8">
-    <title>VR Cycling - Arranque Rápido</title>
+    <title>VR Cycling Therapy</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#008CBA">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    
     <style>
       #ui-container {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -15,24 +22,44 @@
         cursor: pointer; width: 100%; font-weight: bold; margin-bottom: 10px;
       }
       .btn-connect { background-color: #008CBA; color: white; }
-      #status { font-size: 13px; color: #aaa; margin-top: 10px; }
-      #counter { font-size: 24px; color: #00FF00; margin: 10px 0; font-weight: bold; }
+      #status-extra { font-size: 13px; color: #aaa; margin-top: 10px; }
+      #counter { font-size: 28px; color: #00FF00; margin: 15px 0; font-weight: bold; }
+      
+      /* Ocultar UI cuando estemos en modo VR */
+      .a-enter-vr { z-index: 1000 !important; }
     </style>
   </head>
   <body>
 
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').then(() => {
+          console.log("Service Worker registrado con éxito.");
+        });
+      }
+    </script>
+
     <div id="ui-container">
-      <div id="status">PASO 1: Toca el botón azul</div>
-      <button class="btn btn-connect" onclick="iniciarTodo()">1. ENLAZAR Y ACTIVAR</button>
+      <div id="status-main">SISTEMA DE TERAPIA VR</div>
+      <button class="btn btn-connect" onclick="iniciarTodo()">CONECTAR CYCPLUS</button>
       <div id="counter">0</div>
       <div id="status-extra">Esperando conexión...</div>
     </div>
 
-    <a-scene>
+    <a-scene webxr="referenceSpaceType: local-floor">
       <a-assets>
-        <video id="video_asset" src="video_recorrido.mp4" preload="auto" loop="true" crossorigin="anonymous" playsinline webkit-playsinline muted></video>
+        <video id="video_asset" 
+               src="video_recorrido.mp4" 
+               preload="auto" 
+               loop="true" 
+               crossorigin="anonymous" 
+               playsinline 
+               webkit-playsinline 
+               muted>
+        </video>
         <audio id="audio_ambiente" src="ambiente.mp3" loop="true" preload="auto"></audio>
       </a-assets>
+      
       <a-videosphere src="#video_asset" rotation="0 -90 0"></a-videosphere>
       <a-camera look-controls></a-camera>
     </a-scene>
@@ -46,21 +73,23 @@
 
       let lastRevolutions = -1;
       let stopTimeout;
-      
       let targetRate = 0;    
       let currentRate = 0;   
 
-      // --- AJUSTES DE RESPUESTA ---
-      const ACELERACION = 0.06; // Antes 0.03. Ahora arranca el doble de rápido.
-      const FRENADO = 0.015;    // Mantiene la misma inercia al parar.
+      // Ajustes de inercia y respuesta (Turbo Start)
+      const ACELERACION = 0.06; 
+      const FRENADO = 0.015;    
 
       async function iniciarTodo() {
         try {
-          statusExtra.innerText = "Desbloqueando vídeo...";
-          video.play();
-          setTimeout(() => { video.pause(); }, 100); 
+          statusExtra.innerText = "Desbloqueando motor de vídeo...";
+          
+          // Gesto de activación para el navegador
+          video.play().then(() => { video.pause(); });
           audio.play().catch(() => {});
 
+          statusExtra.innerText = "Buscando sensor CYCPLUS...";
+          
           const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: ['00001816-0000-1000-8000-00805f9b34fb'] }]
           });
@@ -70,13 +99,16 @@
           const characteristic = await service.getCharacteristic('00002a5b-0000-1000-8000-00805f9b34fb');
 
           await characteristic.startNotifications();
-          statusExtra.innerText = "¡CONECTADO! Pedalea.";
+          
+          statusExtra.innerText = "¡CONECTADO! Empieza a pedalear.";
+          statusExtra.style.color = "#00FF00";
 
           characteristic.addEventListener('characteristicvaluechanged', (event) => {
             const value = event.target.value;
             const flags = value.getUint8(0);
             let offset = 1;
             if (flags & 0x01) offset += 6; 
+            
             const cumulativeRev = value.getUint16(offset, true);
             counterDisplay.innerText = cumulativeRev;
 
@@ -90,14 +122,14 @@
 
         } catch (error) {
           statusExtra.innerText = "Error: " + error.message;
+          statusExtra.style.color = "#FF0000";
         }
       }
 
       function pedaladaDetectada() {
         targetRate = 1.0; 
 
-        // --- ARRANQUE TURBO ---
-        // Si el vídeo estaba casi parado, saltamos a 0.4 de golpe para que reaccione ya.
+        // ARRANQUE TURBO: Evita que el vídeo se "duerma"
         if (currentRate < 0.4) {
           currentRate = 0.4; 
           video.playbackRate = currentRate;
@@ -107,6 +139,7 @@
           video.play().catch(() => {});
         }
         
+        // Ocultar interfaz al pedalear
         if (uiContainer.style.display !== 'none') {
           uiContainer.style.display = 'none';
         }
@@ -121,7 +154,7 @@
         let factor = (targetRate > currentRate) ? ACELERACION : FRENADO;
         currentRate += (targetRate - currentRate) * factor;
 
-        if (currentRate > 0.1) { // Umbral de movimiento
+        if (currentRate > 0.1) {
           video.playbackRate = currentRate;
           if (video.paused) video.play().catch(() => {});
         } else {
